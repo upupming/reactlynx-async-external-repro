@@ -1,0 +1,22 @@
+{
+  "name": "reactlynx-async-external-repro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reproduce async external module propagation and measure an opt-in startup-preload fix.",
+  "scripts": {
+    "postinstall": "node scripts/save-upstream.mjs && patch-package",
+    "repro": "node scripts/repro.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify": "npm run repro && npm test"
+  },
+  "dependencies": {
+    "@lynx-js/externals-loading-webpack-plugin": "0.3.0",
+    "@rspack/core": "1.7.12",
+    "patch-package": "8.0.1"
+  },
+  "engines": {
+    "node": ">=18.20.8"
+  },
+  "license": "Apache-2.0"
+}

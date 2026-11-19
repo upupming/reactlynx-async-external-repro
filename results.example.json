@@ -1,0 +1,74 @@
+{
+  "node": "v22.23.1",
+  "rspack": "1.7.12",
+  "loader": "0.3.0",
+  "fixtureModules": 100,
+  "results": [
+    {
+      "mode": "sync",
+      "bytes": 3712,
+      "gzipBytes": 1430,
+      "asyncBailouts": 0,
+      "concatenatedGroups": [
+        "./.generated/entry.mjs + 101 modules"
+      ],
+      "files": [],
+      "events": [
+        "wait",
+        "runtime",
+        "business"
+      ]
+    },
+    {
+      "mode": "callback",
+      "bytes": 20921,
+      "gzipBytes": 3649,
+      "asyncBailouts": 102,
+      "concatenatedGroups": [],
+      "files": [],
+      "events": [
+        "runtime",
+        "business"
+      ]
+    },
+    {
+      "mode": "async",
+      "bytes": 20465,
+      "gzipBytes": 3505,
+      "asyncBailouts": 102,
+      "concatenatedGroups": [],
+      "files": [],
+      "events": [
+        "runtime",
+        "business"
+      ]
+    },
+    {
+      "mode": "sync-no-concat",
+      "bytes": 9420,
+      "gzipBytes": 2743,
+      "asyncBailouts": 0,
+      "concatenatedGroups": [],
+      "files": [],
+      "events": [
+        "wait",
+        "runtime",
+        "business"
+      ]
+    },
+    {
+      "mode": "startup-preload",
+      "bytes": 4426,
+      "gzipBytes": 1712,
+      "asyncBailouts": 0,
+      "concatenatedGroups": [
+        "./.generated/entry.mjs + 101 modules"
+      ],
+      "files": [],
+      "events": [
+        "runtime",
+        "business"
+      ]
+    }
+  ]
+}

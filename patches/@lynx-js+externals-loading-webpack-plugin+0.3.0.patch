@@ -1,0 +1,143 @@
+diff --git a/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.d.ts b/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.d.ts
+index 8b24acb319a7daa5e6fc34c7fcdd03d89ddc78e8..7f87f2a6da9d6870926f19df8c8e3ee3dfee7584 100644
+--- a/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.d.ts
++++ b/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.d.ts
+@@ -219,6 +219,14 @@ export interface ExternalValue {
+     async?: boolean | ((context: {
+         systemInfo: Record<string, unknown>;
+     }) => boolean);
++    /**
++     * Preload this external before entry startup while keeping synchronous
++     * external references. The `async` option still selects the loading method.
++     * Experimental opt-in entry startup preload strategy.
++     *
++     * @defaultValue `false`
++     */
++    startupPreload?: boolean;
+     /**
+      * The options of the background layer.
+      *
+diff --git a/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.js b/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.js
+index 078a27ce97f61cabdd5685bbc6e81661f2a36aee..2f172a68bf604f5f4a55b989f77366167f899b3c 100644
+--- a/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.js
++++ b/node_modules/@lynx-js/externals-loading-webpack-plugin/lib/index.js
+@@ -89,12 +89,13 @@ export class ExternalsLoadingPlugin {
+                 for (const [pkgName, external] of Object.entries(externals)) {
+                     externalsMap.set(external.libraryName ?? pkgName, external);
+                 }
+-                const finalExternals = Array.from(externalsMap.entries());
++                // Preload definitions own a shared namespace before ordinary aliases.
++                const finalExternals = Array.from(externalsMap.entries()).sort((a, b) => Number(Boolean(b[1].startupPreload)) - Number(Boolean(a[1].startupPreload)));
+                 if (finalExternals.length === 0) {
+                     return '';
+                 }
+                 const lynxExternalGlobal = getLynxExternalGlobal(externalsLoadingPluginOptions.globalObject);
+-                const runtimeGlobalsInit = `${lynxExternalGlobal} = ${lynxExternalGlobal} === undefined ? {} : ${lynxExternalGlobal};`;
++                const runtimeGlobalsInit = `${lynxExternalGlobal} = ${lynxExternalGlobal} === undefined ? {} : ${lynxExternalGlobal};\nconst startupExternalLoads = [];`;
+                 const loadExternalFunc = `
+ function deferExternal(name, load) {
+   const globals = ${lynxExternalGlobal};
+@@ -114,6 +115,23 @@ function deferExternal(name, load) {
+   });
+ }
+ 
++function registerStartupExternal(name, loadAsync, loadSync, useAsync) {
++  startupExternalLoads.push(() => {
++    const globals = ${lynxExternalGlobal};
++    const mount = namespace => {
++      Object.defineProperty(globals, name, {
++        value: namespace, writable: true, enumerable: true, configurable: true
++      });
++    };
++    const existing = globals[name];
++    if (existing !== undefined) {
++      return existing instanceof Promise ? existing.then(mount) : undefined;
++    }
++    if (useAsync) return loadAsync().then(mount);
++    mount(loadSync());
++  });
++}
++
+ function createRetryingHandler(fetchBundle, retries) {
+   let cachedResponse = null
+   let asyncPromise = null
+@@ -271,6 +289,13 @@ function createLoadExternalSync(handler, sectionPath, timeout) {
+                     sectionLoadTracker.set(sectionKey, mountVar);
+                     const handlerIndex = [...url2fetchCode.keys()].indexOf(urlKey);
+                     const sectionPath = JSON.stringify(layerOptions.sectionPath);
++                    if (external.startupPreload) {
++                        const predicate = typeof async === 'function'
++                            ? `(${async.toString()})({ systemInfo: typeof SystemInfo !== "undefined" ? SystemInfo : (lynx.SystemInfo ?? {}) })`
++                            : JSON.stringify(async);
++                        loadCode.add(`registerStartupExternal(${externalName}, () => createLoadExternalAsync(handler${handlerIndex}, ${sectionPath}), () => createLoadExternalSync(handler${handlerIndex}, ${sectionPath}, ${timeout}), ${predicate});`);
++                        continue;
++                    }
+                     if (typeof async === 'function') {
+                         const predicate = `(${async.toString()})({ systemInfo: typeof SystemInfo !== "undefined" ? SystemInfo : (lynx.SystemInfo ?? {}) })`;
+                         const loadAsync = `createLoadExternalAsync(handler${handlerIndex}, ${sectionPath})`;
+@@ -291,9 +316,44 @@ function createLoadExternalSync(handler, sectionPath, timeout) {
+                     loadExternalFunc,
+                     ...[...url2fetchCode.entries()].map(([urlKey, fetchCode], index) => `const handler${index} = createRetryingHandler(${fetchCode}, ${url2retries.get(urlKey) ?? 0});`),
+                     ...loadCode,
++                    ...(this.chunk.hasRuntime() ? [`${compiler.webpack.RuntimeGlobals.require}.lynxPreloadExternals = () => {
++  const pending = [];
++  for (const load of startupExternalLoads) {
++    try {
++      const result = load();
++      if (result) pending.push(result);
++    } catch (error) {
++      pending.push(Promise.reject(error));
++    }
++  }
++  return pending.length ? Promise.all(pending) : undefined;
++};`] : []),
+                 ].join('\n');
+             }
+         }
++        class StartupPreloadRuntimeModule extends RuntimeModule {
++            constructor() {
++                // Wrap startup before the cache-events STAGE_TRIGGER wrapper.
++                super('lynx external startup preload', RuntimeModule.STAGE_ATTACH + 1);
++            }
++            generate() {
++                const { RuntimeGlobals } = compiler.webpack;
++                return `var nextExternalStartup = ${RuntimeGlobals.startup};
++var externalStartupResult;
++${RuntimeGlobals.startup} = function() {
++  if (externalStartupResult) return externalStartupResult;
++  try {
++    const pending = ${RuntimeGlobals.require}.lynxPreloadExternals();
++    externalStartupResult = pending
++      ? pending.then(nextExternalStartup)
++      : Promise.resolve(nextExternalStartup());
++  } catch (error) {
++    externalStartupResult = Promise.reject(error);
++  }
++  return externalStartupResult;
++};`;
++            }
++        }
+         compiler.hooks.environment.tap(ExternalsLoadingPlugin.name, () => {
+             compiler.options.externals = [
+                 ...(Array.isArray(compiler.options.externals)
+@@ -319,6 +379,11 @@ function createLoadExternalSync(handler, sectionPath, timeout) {
+                     // Skip chunks without a layer
+                     return;
+                 }
++                const currentLayer = layer === externalsLoadingPluginOptions.mainThreadLayer ? 'mainThread' : (layer === externalsLoadingPluginOptions.backgroundLayer ? 'background' : undefined);
++                if (chunk.hasRuntime() && Object.values(externals).some(external => external.startupPreload && external[currentLayer]?.sectionPath)) {
++                    runtimeRequirements.add(compiler.webpack.RuntimeGlobals.startup);
++                    compilation.addRuntimeModule(chunk, new StartupPreloadRuntimeModule());
++                }
+                 runtimeRequirements.add(compiler.webpack.RuntimeGlobals.publicPath);
+                 compilation.addRuntimeModule(chunk, new ExternalsLoadingRuntimeModule(runtimeRequirements, {
+                     layer,
+@@ -342,7 +407,7 @@ function createLoadExternalSync(handler, sectionPath, timeout) {
+                 && externalDeps.has(request)
+                 && currentLayer
+                 && externals[request]?.[currentLayer]) {
+-                const isAsync = externals[request]?.async ?? true;
++                const isAsync = externals[request]?.startupPreload ? false : (externals[request]?.async ?? true);
+                 const libraryName = externals[request]?.libraryName ?? request;
+                 const names = Array.isArray(libraryName) ? libraryName : [libraryName];
+                 if (isAsync) {
